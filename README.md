@@ -1,5 +1,7 @@
 ## Project #1: My Powerful Shell
 
+Please do not fork this repository!
+
 ### *** Due on 11:59pm, April 13 (Wednesday)***
 
 ### Goal
