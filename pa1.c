@@ -61,18 +61,11 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
         if (strcmp(tokens[0], "history") == 0) {
             struct hist *cur;
             int idx = 0;
+            // FIXME: ! 명령 중첩될 때 숫자가 사라짐 -> fork 후 NULL이 삽입되는 것으로 추정
+            // 원인: __process_command에서 파싱할 때 history를 변경함, 문자열 deep copy로 해결
             list_for_each_entry(cur, &history, list) {
                 fprintf(stderr, "%2d: %s", idx++, cur->cmd);
-                for(int i=0;i<10;i++)
-                    if(cur->cmd[i]=='\0') printf("NULL on idx %d\n", i);
-                // fprintf(stderr, "char: %c %c\n", cur->cmd[2], cur->cmd[3]);
-                // printf("----------------------------------\n");
-                // FIXME: ! 명령 중첩될 때 숫자가 사라짐 -> fork 후 NULL이 삽입되는 것으로 추정
-                // break line if string does not have it
-                if (cur->cmd[strlen(cur->cmd) - 1] != '\n')
-                    fprintf(stderr, "\n");
             }
-
             exit(1);  // success
 
         } else if (strcmp(tokens[0], "!") == 0) {
@@ -95,7 +88,6 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
                     }
                     cnt++;
                 }
-                // printf("Arg: %s", arg);
 
                 // Create string to compare to prevent infinite loop
                 char recur_cmd[MAX_COMMAND_LEN];
@@ -105,8 +97,11 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
                     fprintf(stderr, "Index is exceeded than history size!\n");
                 else if (!strcmp(arg, recur_cmd))
                     fprintf(stderr, "Cannot call itself!\n");
-                else
-                    result = __process_command(arg);
+                else {
+                    char *arg_cp = strdup(arg);
+                    result = __process_command(arg_cp);
+                    free(arg_cp);
+                }
             }
             exit(result);
 
