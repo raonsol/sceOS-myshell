@@ -52,27 +52,20 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
     if ((pid = fork()) == 0) {
         if (pipe) {
             // TODO: connect STDERR to pipe
-            // fprintf(stdout, "Connecting pipe...\n");
-            // close(pipe[0]);
+            close(pipe[0]);
             dup2(pipe[1], STDOUT_FILENO);
             close(pipe[1]);
+            // fprintf(stderr, "Closing child pipe\n");
         }
         
         if (strcmp(tokens[0], "history") == 0) {
             struct hist *cur;
             int idx = 0;
+            // FIXME: ! 명령 중첩될 때 숫자가 사라짐 -> fork 후 NULL이 삽입되는 것으로 추정
+            // 원인: __process_command에서 파싱할 때 history를 변경함, 문자열 deep copy로 해결
             list_for_each_entry(cur, &history, list) {
                 fprintf(stderr, "%2d: %s", idx++, cur->cmd);
-                for(int i=0;i<10;i++)
-                    if(cur->cmd[i]=='\0') printf("NULL on idx %d\n", i);
-                // fprintf(stderr, "char: %c %c\n", cur->cmd[2], cur->cmd[3]);
-                // printf("----------------------------------\n");
-                // FIXME: ! 명령 중첩될 때 숫자가 사라짐 -> fork 후 NULL이 삽입되는 것으로 추정
-                // break line if string does not have it
-                if (cur->cmd[strlen(cur->cmd) - 1] != '\n')
-                    fprintf(stderr, "\n");
             }
-
             exit(1);  // success
 
         } else if (strcmp(tokens[0], "!") == 0) {
@@ -95,7 +88,6 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
                     }
                     cnt++;
                 }
-                // printf("Arg: %s", arg);
 
                 // Create string to compare to prevent infinite loop
                 char recur_cmd[MAX_COMMAND_LEN];
@@ -105,8 +97,11 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
                     fprintf(stderr, "Index is exceeded than history size!\n");
                 else if (!strcmp(arg, recur_cmd))
                     fprintf(stderr, "Cannot call itself!\n");
-                else
-                    result = __process_command(arg);
+                else {
+                    char *arg_cp = strdup(arg);
+                    result = __process_command(arg_cp);
+                    free(arg_cp);
+                }
             }
             exit(result);
 
@@ -127,6 +122,7 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
             close(pipe[1]);
             dup2(pipe[0], STDIN_FILENO);
             close(pipe[0]);
+            // printf("Closing parent pipe\n");
         }
         int status;
         result = wait(&status);
@@ -180,12 +176,6 @@ static int run_command(int nr_tokens, char *tokens[]) {
             return -1;
         }
 
-        int fd[2];  // 0==read, 1==write
-        if (pipe(fd) < 0) {
-		    fprintf(stderr, "Error on creating pipe\n");
-            return -1;
-        }
-
         // split tokens
         int nr_tokens_after = nr_tokens - nr_tokens_before - 1;
         char *tok_before[nr_tokens_before + 1], *tok_after[nr_tokens_after + 1];
@@ -196,32 +186,40 @@ static int run_command(int nr_tokens, char *tokens[]) {
         tok_before[nr_tokens_before] = NULL;
         tok_after[nr_tokens_after] = NULL;
 
-        // for (int i = 0; i < nr_tokens_before; i++) 
+        // for (int i = 0; i < nr_tokens_before; i++)
         //     fprintf(stdout, "Front tok %d: %s\n", i, tok_before[i]);
-        // for (int i = 0; i < nr_tokens_after; i++) 
-        //     fprintf(stdout, "Back tok %d: %s\n", i, tok_after[i]);
 
-        result = exec_command(nr_tokens_before, tok_before, fd);
-        if (result > 1) result = exec_command(nr_tokens_after, tok_after, fd);
+        // FIXME: 실행 종료가 안됨, EOF가 안들어가는걸로 추정
+        // -> fork 후의 안쪽에서 pipe 생성하니까 제대로 작동함. 왜??
+        int pid, fd[2];  // 0==read, 1==write
+        if ((pid = fork()) == 0) {      //child
+            if (pipe(fd) < 0) {
+                fprintf(stderr, "Error on creating pipe\n");
+                return -1;
+            }
+            result = exec_command(nr_tokens_before, tok_before, fd);
+            if(result > 1)
+                result = exec_command(nr_tokens_after, tok_after, NULL);
+            else
+                exit(-1);
+            exit(result);
+        } else {                        // parent
+            int status;
+            result = wait(&status);
+            // fprintf(stdout, "PID %d finished\n", pid);
+            if (status == -1) result = status;  // execute fail
+        }
 
     } else {  // if no pipe
         result = exec_command(nr_tokens, tokens, NULL);
     }
     // fprintf(stdout, "run result: %d\n", result);
-    
     if (result >= 0)  // success
         return 1;
     else
         return result;
 }
 
-/***********************************************************************
- * append_history()
- *
- * DESCRIPTION
- *   Append @command into the history. The appended command can be later
- *   recalled with "!" built-in command
- */
 static void append_history(char *const command) {
     struct hist *node = (struct hist *)malloc(sizeof(struct hist));
     node->cmd = (char *)malloc(sizeof(char) * (strlen(command)));

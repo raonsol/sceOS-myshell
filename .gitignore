@@ -57,3 +57,4 @@ dkms.conf
 .vscode
 *.code-workspace
 *.pdf
+.DS_Store
