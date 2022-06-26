@@ -52,10 +52,10 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
     if ((pid = fork()) == 0) {
         if (pipe) {
             // TODO: connect STDERR to pipe
-            // fprintf(stdout, "Connecting pipe...\n");
-            // close(pipe[0]);
+            close(pipe[0]);
             dup2(pipe[1], STDOUT_FILENO);
             close(pipe[1]);
+            // fprintf(stderr, "Closing child pipe\n");
         }
         
         if (strcmp(tokens[0], "history") == 0) {
@@ -122,6 +122,7 @@ static int exec_command(int nr_tokens, char *tokens[], int *pipe) {
             close(pipe[1]);
             dup2(pipe[0], STDIN_FILENO);
             close(pipe[0]);
+            // printf("Closing parent pipe\n");
         }
         int status;
         result = wait(&status);
@@ -175,12 +176,6 @@ static int run_command(int nr_tokens, char *tokens[]) {
             return -1;
         }
 
-        int fd[2];  // 0==read, 1==write
-        if (pipe(fd) < 0) {
-		    fprintf(stderr, "Error on creating pipe\n");
-            return -1;
-        }
-
         // split tokens
         int nr_tokens_after = nr_tokens - nr_tokens_before - 1;
         char *tok_before[nr_tokens_before + 1], *tok_after[nr_tokens_after + 1];
@@ -191,19 +186,35 @@ static int run_command(int nr_tokens, char *tokens[]) {
         tok_before[nr_tokens_before] = NULL;
         tok_after[nr_tokens_after] = NULL;
 
-        // for (int i = 0; i < nr_tokens_before; i++) 
+        // for (int i = 0; i < nr_tokens_before; i++)
         //     fprintf(stdout, "Front tok %d: %s\n", i, tok_before[i]);
-        // for (int i = 0; i < nr_tokens_after; i++) 
-        //     fprintf(stdout, "Back tok %d: %s\n", i, tok_after[i]);
 
-        result = exec_command(nr_tokens_before, tok_before, fd);
-        if (result > 1) result = exec_command(nr_tokens_after, tok_after, fd);
+        // FIXME: 실행 종료가 안됨, EOF가 안들어가는걸로 추정
+        // -> fork 후의 안쪽에서 pipe 생성하니까 제대로 작동함. 왜??
+        int pid, fd[2];  // 0==read, 1==write
+        if ((pid = fork()) == 0) {      //child
+            if (pipe(fd) < 0) {
+                fprintf(stderr, "Error on creating pipe\n");
+                return -1;
+            }
+            result = exec_command(nr_tokens_before, tok_before, fd);
+            if(result > 1)
+                result = exec_command(nr_tokens_after, tok_after, NULL);
+            else
+                exit(-1);
+            exit(result);
+        } else {                        // parent
+            int status;
+            result = wait(&status);
+            // fprintf(stdout, "PID %d finished\n", pid);
+            if (status == -1) result = status;  // execute fail
+        }
 
     } else {  // if no pipe
         result = exec_command(nr_tokens, tokens, NULL);
     }
     // fprintf(stdout, "run result: %d\n", result);
-    
+
     if (result >= 0)  // success
         return 1;
     else
